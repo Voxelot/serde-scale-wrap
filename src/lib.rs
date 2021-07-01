@@ -69,9 +69,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::{
     convert::Infallible,
-    fmt::{self, Display},
 };
-use parity_scale_codec::{Decode, Encode, EncodeLike, Input, Output};
+use parity_scale_codec::{Decode, Encode, EncodeLike, Input, Output, Error};
 use serde::{Deserialize, Serialize};
 use serde_scale::{Bytes, Read, Write};
 
@@ -89,7 +88,7 @@ impl<T: Serialize> Encode for Wrap<T> {
     /// # Panics
     /// Panics if the serializer returns an error (e.g. when attempting to serialize a floating
     /// point number).
-    fn encode_to<O: Output>(&self, dst: &mut O) {
+    fn encode_to<O: Output + ?Sized>(&self, dst: &mut O) {
         let mut serializer = serde_scale::Serializer::new(OutputToWrite(dst));
         self.0.serialize(&mut serializer).unwrap();
     }
@@ -102,7 +101,7 @@ impl<'de, T: Deserialize<'de>> Decode for Wrap<T> {
         let mut deserializer = serde_scale::Deserializer::new(InputToRead::new(input));
         match T::deserialize(&mut deserializer) {
             Ok(x) => Ok(Wrap(x)),
-            Err(serde_scale::Error::Io(Error(s))) => Err(s.into()),
+            Err(serde_scale::Error::Io(e)) => Err(e),
             Err(_) => Err("Deserialization failed".into()),
         }
     }
@@ -141,24 +140,10 @@ impl<'a, 'de, I: Input + ?Sized> Read<'de> for InputToRead<'a, I> {
         F: FnOnce(Bytes<'de, '_>) -> R,
     {
         self.buffer.resize(n, 0);
-        self.input.read(&mut self.buffer).map_err(|e| Error(e.what()))?;
+        self.input.read(&mut self.buffer)?;
         Ok(f(Bytes::Temporary(&self.buffer)))
     }
 }
-
-/// Unstable error type meant to disappear if/when `parity-scale-codec`'s `Error` implements
-/// `Display` unconditionally.
-#[derive(Debug)]
-pub struct Error(pub &'static str);
-
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for Error {}
 
 #[cfg(test)]
 mod tests {
